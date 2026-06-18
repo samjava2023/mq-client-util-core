@@ -16,6 +16,8 @@ public final class ConnectionConfig {
     private final String connectionName;
     private final String sslCipherSpec;
     private final Boolean useMqCspAuthentication;
+    private final Boolean useIbmCipherMappings;
+    private final Boolean preferTls;
     private final String sslTrustStore;
     private final String sslTrustStorePassword;
     private final String sslKeyStore;
@@ -39,6 +41,8 @@ public final class ConnectionConfig {
                             String connectionName,
                             String sslCipherSpec,
                             Boolean useMqCspAuthentication,
+                            Boolean useIbmCipherMappings,
+                            Boolean preferTls,
                             String sslTrustStore,
                             String sslTrustStorePassword,
                             String sslKeyStore,
@@ -63,6 +67,12 @@ public final class ConnectionConfig {
             }
         }
 
+        if ((resolvedHost == null || resolvedPort == null) && connectionName != null) {
+            throw new IllegalArgumentException(
+                "Invalid connectionName '" + connectionName
+                    + "'. Use IBM MQ format host(port), e.g. localhost(1423), or set host and port explicitly");
+        }
+
         this.host = resolvedHost;
         this.port = resolvedPort;
         this.username = username;
@@ -70,6 +80,8 @@ public final class ConnectionConfig {
         this.queueManager = queueManager;
         this.channel = channel;
         this.useMqCspAuthentication = useMqCspAuthentication;
+        this.useIbmCipherMappings = useIbmCipherMappings;
+        this.preferTls = preferTls;
         this.sslTrustStore = sslTrustStore;
         this.sslTrustStorePassword = sslTrustStorePassword;
         this.sslKeyStore = sslKeyStore;
@@ -91,6 +103,8 @@ public final class ConnectionConfig {
     public String getConnectionName() { return connectionName; }
     public String getSslCipherSpec() { return sslCipherSpec; }
     public Boolean getUseMqCspAuthentication() { return useMqCspAuthentication; }
+    public Boolean getUseIbmCipherMappings() { return useIbmCipherMappings; }
+    public Boolean getPreferTls() { return preferTls; }
     public String getSslTrustStore() { return sslTrustStore; }
     public String getSslTrustStorePassword() { return sslTrustStorePassword; }
     public String getSslKeyStore() { return sslKeyStore; }
@@ -115,6 +129,16 @@ public final class ConnectionConfig {
         if (open > 0 && close > open) {
             String h = trimmed.substring(0, open).trim();
             String p = trimmed.substring(open + 1, close).trim();
+            try {
+                return new HostPort(h, Integer.valueOf(p));
+            } catch (NumberFormatException e) {
+                return new HostPort(h, null);
+            }
+        }
+        int colon = trimmed.lastIndexOf(':');
+        if (colon > 0 && colon < trimmed.length() - 1) {
+            String h = trimmed.substring(0, colon).trim();
+            String p = trimmed.substring(colon + 1).trim();
             try {
                 return new HostPort(h, Integer.valueOf(p));
             } catch (NumberFormatException e) {

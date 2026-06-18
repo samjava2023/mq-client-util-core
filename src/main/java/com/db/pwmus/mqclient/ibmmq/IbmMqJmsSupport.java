@@ -16,12 +16,32 @@ import javax.jms.MessageProducer;
 import javax.jms.Queue;
 import javax.jms.Session;
 import javax.jms.TextMessage;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 final class IbmMqJmsSupport {
     private static final String CLASS = "IbmMqJmsSupport";
+
+    /**
+     * Oracle/JSSE cipher-suite names for common IBM MQ CipherSpecs when
+     * {@code useIbmCipherMappings} is {@code false} (non-IBM JRE mapping table).
+     */
+    private static final Map<String, String> MQ_CIPHER_TO_TLS_CIPHER;
+    static {
+        Map<String, String> map = new HashMap<String, String>();
+        map.put("ECDHE_RSA_AES_256_GCM_SHA384", "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384");
+        map.put("ECDHE_RSA_AES_128_GCM_SHA256", "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256");
+        map.put("ECDHE_RSA_AES_256_CBC_SHA384", "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384");
+        map.put("ECDHE_RSA_AES_128_CBC_SHA256", "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256");
+        map.put("ECDHE_ECDSA_AES_256_GCM_SHA384", "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384");
+        map.put("ECDHE_ECDSA_AES_128_GCM_SHA256", "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256");
+        map.put("TLS_RSA_WITH_AES_256_GCM_SHA384", "TLS_RSA_WITH_AES_256_GCM_SHA384");
+        map.put("TLS_RSA_WITH_AES_128_GCM_SHA256", "TLS_RSA_WITH_AES_128_GCM_SHA256");
+        MQ_CIPHER_TO_TLS_CIPHER = Collections.unmodifiableMap(map);
+    }
 
     private IbmMqJmsSupport() {
     }
@@ -105,7 +125,10 @@ final class IbmMqJmsSupport {
 
     private static MQQueueConnectionFactory createConnectionFactory(ConnectionConfig config) throws JMSException {
         if (config.getHost() == null || config.getPort() == null) {
-            throw new IllegalArgumentException("host/port or connectionName is required for IBM MQ");
+            throw new IllegalArgumentException(
+                "host/port or connectionName is required for IBM MQ (resolved host="
+                    + config.getHost() + ", port=" + config.getPort()
+                    + ", connectionName=" + config.getConnectionName() + ")");
         }
         if (config.getQueueManager() == null) {
             throw new IllegalArgumentException("queueManager is required for IBM MQ");
@@ -115,6 +138,8 @@ final class IbmMqJmsSupport {
         }
 
         applySslStores(config);
+        configureIbmCipherMappings(config);
+        configurePreferTls(config);
 
         MQQueueConnectionFactory factory = new MQQueueConnectionFactory();
         factory.setHostName(config.getHost());
@@ -122,6 +147,11 @@ final class IbmMqJmsSupport {
         factory.setQueueManager(config.getQueueManager());
         factory.setChannel(config.getChannel());
         factory.setTransportType(WMQConstants.WMQ_CM_CLIENT);
+
+        String connectionName = trimToNull(config.getConnectionName());
+        if (connectionName != null) {
+            factory.setStringProperty("WMQ_CONNECTION_NAME", connectionName);
+        }
 
         configureAuthentication(factory, config);
         configureSsl(factory, config);
@@ -158,15 +188,70 @@ final class IbmMqJmsSupport {
             return;
         }
 
-        String cipher = trimToNull(config.getSslCipherSpec());
-        if (cipher == null) {
+        String configuredCipher = trimToNull(config.getSslCipherSpec());
+        if (configuredCipher == null) {
             throw new IllegalArgumentException(
                 "sslCipherSpec is required when ssl is true (e.g. ECDHE_RSA_AES_256_GCM_SHA384)");
         }
 
+        String cipher = resolveSslCipherSuite(configuredCipher, config);
         factory.setSSLCipherSuite(cipher);
         MqFlowLog.debug(CLASS, "configureSsl", "enabled cipherSuite=" + cipher
-            + ", auth=" + (hasCredentials(config) ? "username/password" : "none"));
+            + (cipher.equals(configuredCipher) ? "" : " (from sslCipherSpec=" + configuredCipher + ")")
+            + ", auth=" + (hasCredentials(config) ? "username/password" : "none")
+            + ", useIbmCipherMappings=" + config.getUseIbmCipherMappings()
+            + ", preferTls=" + resolvePreferTls(config));
+    }
+
+    /**
+     * When {@code useIbmCipherMappings} is {@code false}, IBM MQ expects a JSSE cipher suite name
+     * (e.g. {@code TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384}), not the queue-manager CipherSpec
+     * ({@code ECDHE_RSA_AES_256_GCM_SHA384}). Production configs often use the MQ name; translate here.
+     */
+    private static String resolveSslCipherSuite(String configuredCipher, ConnectionConfig config) {
+        Boolean useMappings = config.getUseIbmCipherMappings();
+        if (useMappings != null && !useMappings.booleanValue()) {
+            if (configuredCipher.startsWith("TLS_") || configuredCipher.startsWith("SSL_")) {
+                return configuredCipher;
+            }
+            String tlsCipher = MQ_CIPHER_TO_TLS_CIPHER.get(configuredCipher.toUpperCase(Locale.US));
+            if (tlsCipher != null) {
+                return tlsCipher;
+            }
+        }
+        return configuredCipher;
+    }
+
+    /**
+     * When {@code ssl} is {@code true}, prefer TLS for the IBM MQ client connection
+     * ({@code com.ibm.mq.cfg.preferTLS=true}) unless {@code preferTls} is explicitly {@code false}.
+     */
+    private static void configurePreferTls(ConnectionConfig config) {
+        if (!isSslEnabled(config)) {
+            return;
+        }
+        boolean preferTls = resolvePreferTls(config);
+        System.setProperty("com.ibm.mq.cfg.preferTLS", preferTls ? "true" : "false");
+        MqFlowLog.debug(CLASS, "configurePreferTls",
+            "com.ibm.mq.cfg.preferTLS=" + preferTls);
+    }
+
+    private static boolean resolvePreferTls(ConnectionConfig config) {
+        Boolean preferTls = config.getPreferTls();
+        return preferTls == null || preferTls.booleanValue();
+    }
+
+    /**
+     * When {@code useIbmCipherMappings} is {@code false}, switch IBM MQ to Oracle/JSSE cipher mappings
+     * (required on non-IBM JREs for TLS 1.2 suites). Ignored on IBM MQ 9.3.3+ but harmless.
+     */
+    private static void configureIbmCipherMappings(ConnectionConfig config) {
+        Boolean useMappings = config.getUseIbmCipherMappings();
+        if (useMappings != null && !useMappings.booleanValue()) {
+            System.setProperty("com.ibm.mq.cfg.useIBMCipherMappings", "false");
+            MqFlowLog.debug(CLASS, "configureIbmCipherMappings",
+                "com.ibm.mq.cfg.useIBMCipherMappings=false");
+        }
     }
 
     private static void applySslStores(ConnectionConfig config) {

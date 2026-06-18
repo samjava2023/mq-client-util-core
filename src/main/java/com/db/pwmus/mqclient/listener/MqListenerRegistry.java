@@ -39,7 +39,17 @@ public final class MqListenerRegistry implements Closeable {
     }
 
     public void register(MqQueueMessageHandler handler) {
-        register(handler.getLogicalQueueName(), handler);
+        if (handler == null) {
+            throw new IllegalArgumentException("handler is required");
+        }
+        String logicalQueue = handler.getLogicalQueueName();
+        if (logicalQueue == null || logicalQueue.trim().isEmpty()) {
+            throw new IllegalArgumentException(
+                "logicalQueue is required on MqQueueMessageHandler bean ["
+                    + handler.getClass().getName()
+                    + "]. Return a non-empty name matching a key under \"queues\" in mq-config.json");
+        }
+        register(logicalQueue.trim(), handler);
     }
 
     public void registerAll(Iterable<MqQueueMessageHandler> queueHandlers) {
@@ -64,11 +74,16 @@ public final class MqListenerRegistry implements Closeable {
             return;
         }
         for (String logicalQueue : queueNames) {
-            MqMessageHandler handler = handlers.get(logicalQueue);
-            if (handler == null) {
-                handler = LoggingMqMessageHandler.forQueue(logicalQueue);
+            if (logicalQueue == null || logicalQueue.trim().isEmpty()) {
+                MqFlowLog.info(CLASS, "startConfigured", "skipping blank queue name in mq-config.json");
+                continue;
             }
-            start(logicalQueue, handler);
+            String queue = logicalQueue.trim();
+            MqMessageHandler handler = handlers.get(queue);
+            if (handler == null) {
+                handler = LoggingMqMessageHandler.forQueue(queue);
+            }
+            start(queue, handler);
         }
     }
 

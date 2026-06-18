@@ -58,6 +58,8 @@ public final class MqFlowLog {
         sb.append(", username=").append(config.getUsername());
         sb.append(", password=").append(maskSecret(config.getPassword()));
         sb.append(", useMqCspAuthentication=").append(config.getUseMqCspAuthentication());
+        sb.append(", useIbmCipherMappings=").append(config.getUseIbmCipherMappings());
+        sb.append(", preferTls=").append(config.getPreferTls());
         sb.append(", connectionTimeoutMs=").append(config.getConnectionTimeoutMs());
         return sb.toString();
     }

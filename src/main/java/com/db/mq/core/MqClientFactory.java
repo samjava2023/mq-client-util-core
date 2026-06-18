@@ -238,6 +238,8 @@ public final class MqClientFactory implements Closeable {
                 textOrNull(n.get("connectionName")),
                 textOrNull(n.get("sslCipherSpec")),
                 boolOrNull(n.get("useMqCspAuthentication")),
+                boolOrNull(n.get("useIbmCipherMappings")),
+                boolOrNull(n.get("preferTls")),
                 textOrNull(n.get("sslTrustStore")),
                 textOrNull(n.get("sslTrustStorePassword")),
                 textOrNull(n.get("sslKeyStore")),

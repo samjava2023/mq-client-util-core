@@ -97,8 +97,13 @@ final class MqListener implements com.db.pwmus.mqclient.api.MqListener {
     }
 
     private final class PollingRunnable implements Runnable {
+        private int pollCycles;
+        private int errorCycles;
+
         @Override
         public void run() {
+            MqFlowLog.info(CLASS, "poll.started", "physicalQueue=" + queueConfig.getResolvedName()
+                + ", pollTimeoutSec=" + POLL_TIMEOUT_SECONDS);
             while (running.get()) {
                 try {
                     MqMessage message = IbmMqJmsSupport.receive(
@@ -107,6 +112,7 @@ final class MqListener implements com.db.pwmus.mqclient.api.MqListener {
                         POLL_TIMEOUT_SECONDS,
                         TimeUnit.SECONDS
                     );
+                    pollCycles++;
                     if (message != null && handler != null) {
                         MqFlowLog.info(CLASS, "onMessage.dispatch", "physicalQueue=" + queueConfig.getResolvedName()
                             + ", contentType=" + message.getContentType()
@@ -114,14 +120,23 @@ final class MqListener implements com.db.pwmus.mqclient.api.MqListener {
                             + ", body=" + MqFlowLog.formatBody(message.getBody())
                             + ", handler=" + handler.getClass().getName());
                         handler.onMessage(message);
+                    } else if (pollCycles % 12 == 0) {
+                        MqFlowLog.info(CLASS, "poll.heartbeat", "physicalQueue=" + queueConfig.getResolvedName()
+                            + ", polls=" + pollCycles
+                            + ", errors=" + errorCycles
+                            + " — connected, waiting for messages");
                     }
                 } catch (Exception e) {
+                    errorCycles++;
                     if (running.get()) {
-                        MqFlowLog.fail(CLASS, "poll", "physicalQueue=" + queueConfig.getResolvedName(), e);
+                        MqFlowLog.fail(CLASS, "poll", "physicalQueue=" + queueConfig.getResolvedName()
+                            + ", polls=" + pollCycles + ", errors=" + errorCycles, e);
                         sleepQuietly(2000L);
                     }
                 }
             }
+            MqFlowLog.info(CLASS, "poll.stopped", "physicalQueue=" + queueConfig.getResolvedName()
+                + ", polls=" + pollCycles + ", errors=" + errorCycles);
         }
 
         private void sleepQuietly(long millis) {

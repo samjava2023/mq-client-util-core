@@ -70,9 +70,14 @@ public final class MqListenerRegistry implements Closeable {
     public synchronized void startConfigured() {
         List<String> queueNames = factory.getListenerQueueNames();
         if (queueNames.isEmpty()) {
-            MqFlowLog.info(CLASS, "startConfigured", "no queues with listen=true");
+            MqFlowLog.info(CLASS, "startConfigured",
+                "no queues with listen=true — background listeners will NOT start. "
+                    + "Add \"listen\": true to a queue entry in mq-config.json");
             return;
         }
+        MqFlowLog.info(CLASS, "startConfigured",
+            "starting listeners for logical queues: " + queueNames
+                + ", registered handlers: " + handlers.keySet());
         for (String logicalQueue : queueNames) {
             if (logicalQueue == null || logicalQueue.trim().isEmpty()) {
                 MqFlowLog.info(CLASS, "startConfigured", "skipping blank queue name in mq-config.json");
@@ -82,6 +87,12 @@ public final class MqListenerRegistry implements Closeable {
             MqMessageHandler handler = handlers.get(queue);
             if (handler == null) {
                 handler = LoggingMqMessageHandler.forQueue(queue);
+                MqFlowLog.info(CLASS, "startConfigured",
+                    "no MqQueueMessageHandler bean for logicalQueue=" + queue
+                        + " — using LoggingMqMessageHandler");
+            } else {
+                MqFlowLog.info(CLASS, "startConfigured",
+                    "using handler " + handler.getClass().getName() + " for logicalQueue=" + queue);
             }
             start(queue, handler);
         }

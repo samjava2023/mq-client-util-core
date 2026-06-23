@@ -290,7 +290,22 @@ public final class MqClientFactory implements Closeable {
     }
 
     private static Boolean boolOrNull(JsonNode n) {
-        return n == null || n.isNull() ? null : Boolean.valueOf(n.asBoolean());
+        if (n == null || n.isNull()) {
+            return null;
+        }
+        if (n.isBoolean()) {
+            return Boolean.valueOf(n.booleanValue());
+        }
+        if (n.isTextual()) {
+            String text = n.asText().trim();
+            if ("true".equalsIgnoreCase(text)) {
+                return Boolean.TRUE;
+            }
+            if ("false".equalsIgnoreCase(text)) {
+                return Boolean.FALSE;
+            }
+        }
+        return Boolean.valueOf(n.asBoolean());
     }
 }
 
